@@ -32,8 +32,16 @@ breast cancer/
 
 ```bash
 pip install -r requirements.txt
-python medical_ai_loader.py --threshold 0.5 --export-dir thesis_outputs
+python medical_ai_loader.py --threshold 0.5 --feature-selection bwwpa --top-k 12 --use-small-dataset --dataset-path data/wisconsin_breast_cancer_live.csv --export-dir thesis_outputs_live
 ```
+
+## Live Dataset File
+
+This project now supports a real local CSV dataset file:
+
+- `data/wisconsin_breast_cancer_live.csv`
+
+The file is generated from the authentic scikit-learn Wisconsin dataset and can be reused directly for experiments and thesis writeups.
 
 ## Run The Interface
 
@@ -44,6 +52,8 @@ streamlit run streamlit_app.py
 The interface provides:
 
 - Real-time threshold control for clinical triage scenarios
+- BWWPA feature-selection toggle with Top-K control
+- Live dataset file path selector
 - Confusion matrix and risk-quality plots
 - Single-patient inference form for morphology inputs
 - Thesis contribution ideas to guide your write-up

@@ -9,9 +9,27 @@ from medical_ai_loader import BreastCancerDiagnosticPipeline, PipelineConfig
 
 
 @st.cache_resource
-def train_pipeline(threshold: float) -> tuple[BreastCancerDiagnosticPipeline, dict]:
-    pipeline = BreastCancerDiagnosticPipeline(config=PipelineConfig(decision_threshold=threshold))
-    metrics = pipeline.fit_and_evaluate(decision_threshold=threshold)
+def train_pipeline(
+    threshold: float,
+    feature_selection: str,
+    top_k: int,
+    use_live_dataset: bool,
+    dataset_path: str,
+) -> tuple[BreastCancerDiagnosticPipeline, dict]:
+    pipeline = BreastCancerDiagnosticPipeline(
+        config=PipelineConfig(
+            decision_threshold=threshold,
+            feature_selection=feature_selection,
+            top_k=top_k,
+        )
+    )
+    metrics = pipeline.fit_and_evaluate(
+        decision_threshold=threshold,
+        use_small_dataset=use_live_dataset,
+        dataset_path=dataset_path,
+        feature_selection=feature_selection,
+        top_k=top_k,
+    )
     return pipeline, metrics
 
 
@@ -39,13 +57,27 @@ def main() -> None:
     )
 
     threshold = st.slider("Decision threshold (benign probability)", min_value=0.1, max_value=0.9, value=0.5, step=0.05)
-    pipeline, metrics = train_pipeline(threshold=threshold)
+    feature_selection = st.selectbox("Feature selection strategy", options=["all", "cohen_d", "bwwpa"], index=2)
+    top_k = st.slider("Top-K features (ignored for 'all')", min_value=0, max_value=30, value=12, step=1)
+    use_live_dataset = st.checkbox("Use live local dataset file", value=True)
+    dataset_path = st.text_input("Dataset path", value="data/wisconsin_breast_cancer_live.csv")
+
+    pipeline, metrics = train_pipeline(
+        threshold=threshold,
+        feature_selection=feature_selection,
+        top_k=top_k,
+        use_live_dataset=use_live_dataset,
+        dataset_path=dataset_path,
+    )
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("ROC-AUC", f"{metrics['roc_auc']:.3f}")
     col2.metric("PR-AUC", f"{metrics['pr_auc']:.3f}")
     col3.metric("Recall", f"{metrics['recall']:.3f}")
     col4.metric("Precision", f"{metrics['precision']:.3f}")
+
+    st.subheader("Selected Features")
+    st.write(metrics.get("selected_features", []))
 
     st.subheader("Confusion Matrix")
     confusion = pd.DataFrame(
@@ -83,6 +115,20 @@ def main() -> None:
             f"P(malignant)={prediction['probability_malignant']:.3f}"
         )
         st.json(prediction)
+
+    st.subheader("Export Thesis Artifacts")
+    export_dir = st.text_input("Export directory", value="thesis_outputs_live")
+    if st.button("Export Results", type="secondary"):
+        artifacts = pipeline.export_thesis_artifacts(
+            output_dir=export_dir,
+            decision_threshold=threshold,
+            use_small_dataset=use_live_dataset,
+            dataset_path=dataset_path,
+            feature_selection=feature_selection,
+            top_k=top_k,
+        )
+        st.success("Artifacts exported successfully")
+        st.json(artifacts)
 
     st.subheader("Thesis Contribution Ideas")
     st.markdown(
