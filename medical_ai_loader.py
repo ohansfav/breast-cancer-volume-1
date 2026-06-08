@@ -1,35 +1,37 @@
-"""Breast Cancer Wisconsin exploratory clinical data analysis and baseline classification.
-
-This module provides a reproducible, clinically framed pipeline for loading the
-Breast Cancer Wisconsin dataset from scikit-learn, inspecting the feature
-space, standardizing the predictors, training a baseline classifier, and
-reporting evaluation metrics suitable for a medical AI portfolio project.
-"""
+"""Thesis-ready breast cancer diagnostic baseline with reusable API and CLI support."""
 
 from __future__ import annotations
 
+import argparse
+import json
 import logging
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.calibration import calibration_curve
 from sklearn.datasets import load_breast_cancer
 from sklearn.exceptions import NotFittedError
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    classification_report,create more individual projects with actual solution and prepare a thesis based idea for me for eaach project and push to my github make the naming unique as i might use them for my masters degree. create as many as possible and push them individually to my github. you have full access
+    accuracy_score,
+    average_precision_score,
+    brier_score_loss,
+    classification_report,
     confusion_matrix,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
+    roc_auc_score,
 )
-from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-# Clinical notes summarize why specific morphometric features matter in screening.
 CLINICAL_FEATURE_NOTES: Dict[str, str] = {
     "mean radius": "Proxy for lesion size; larger cell clusters can indicate aggressive growth.",
     "mean texture": "Captures grayscale heterogeneity linked to tissue disorganization.",
@@ -44,20 +46,13 @@ CLINICAL_FEATURE_NOTES: Dict[str, str] = {
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    """Configuration for the clinical analysis pipeline."""
-
     test_size: float = 0.2
     random_state: int = 42
+    decision_threshold: float = 0.5
 
 
 class BreastCancerDiagnosticPipeline:
-    """End-to-end breast cancer screening analysis pipeline.
-
-    The Wisconsin Breast Cancer dataset contains digitized features derived from
-    fine needle aspirate (FNA) images of breast masses. Features such as radius,
-    texture, perimeter, and area are clinical morphology proxies: larger and
-    more irregular values often correlate with malignant behavior.
-    """
+    """Reusable pipeline for model training, evaluation, and thesis artifact export."""
 
     def __init__(self, config: PipelineConfig | None = None) -> None:
         self.config = config or PipelineConfig()
@@ -71,92 +66,54 @@ class BreastCancerDiagnosticPipeline:
         self.X_test: pd.DataFrame | None = None
         self.y_train: pd.Series | None = None
         self.y_test: pd.Series | None = None
-        self.y_pred: np.ndarray | None = None
 
     @staticmethod
     def _setup_logger() -> logging.Logger:
-        """Create a console logger with compact medical-research style output."""
-
         logger = logging.getLogger("breast_cancer_pipeline")
         if not logger.handlers:
             handler = logging.StreamHandler()
-            formatter = logging.Formatter("[%(levelname)s] %(message)s")
-            handler.setFormatter(formatter)
+            handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
             logger.addHandler(handler)
         logger.setLevel(logging.INFO)
         logger.propagate = False
         return logger
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """Load the authentic Breast Cancer Wisconsin dataset from scikit-learn."""
-
-        try:
-            dataset = load_breast_cancer(as_frame=True)
-        except Exception as exc:
-            self.logger.exception("Dataset loading failed.")
-            raise RuntimeError("Unable to load the Breast Cancer Wisconsin dataset.") from exc
-
+        dataset = load_breast_cancer(as_frame=True)
         self.data = dataset.frame.copy()
         self.target = self.data["target"]
         self.target_names = dataset.target_names
         self.feature_names = dataset.feature_names
-
-        self.logger.info("Dataset loaded successfully.")
-        self.logger.info("Samples: %d | Features: %d", self.data.shape[0], self.data.shape[1] - 1)
-        self.logger.info(
-            "Clinical labels: %s (0 = malignant, 1 = benign)",
-            ", ".join(dataset.target_names),
-        )
-
+        self.logger.info("Loaded %d samples and %d features.", self.data.shape[0], len(self.feature_names))
         return self.data, self.target
 
     def inspect_features(self) -> None:
-        """Log the most clinically relevant morphology features."""
-
         if self.data is None:
             raise RuntimeError("Data must be loaded before feature inspection.")
+        for feature, note in CLINICAL_FEATURE_NOTES.items():
+            if feature in self.data.columns:
+                self.logger.info("%s -> %s", feature, note)
 
-        key_features = [
-            "mean radius",
-            "mean texture",
-            "mean perimeter",
-            "mean area",
-            "mean smoothness",
-            "mean compactness",
-            "mean concavity",
-            "mean concave points",
-        ]
-        available = [feature for feature in key_features if feature in self.data.columns]
-
-        self.logger.info("Selected clinical morphology features: %s", ", ".join(available))
-        for feature in available:
-            self.logger.info("  %s -> %s", feature, CLINICAL_FEATURE_NOTES.get(feature, "Clinical note unavailable."))
+    def summarize_data(self) -> pd.DataFrame:
+        if self.data is None or self.target is None:
+            raise RuntimeError("Data must be loaded before summarization.")
+        summary = self.data.drop(columns=["target"]).describe().T
+        summary["missing_values"] = self.data.drop(columns=["target"]).isna().sum()
+        return summary
 
     def baseline_statistical_differentiation(self) -> pd.DataFrame:
-        """Compare malignant vs benign cohorts using mean/STD and standardized effect size.
-
-        Cohen's d is used as a baseline signal-strength indicator:
-        d = (mean_malignant - mean_benign) / pooled_std.
-        """
-
         if self.data is None:
             raise RuntimeError("Data must be loaded before statistical differentiation.")
-
         features = self.data.drop(columns=["target"])
         malignant = features[self.data["target"] == 0]
         benign = features[self.data["target"] == 1]
 
         malignant_mean = malignant.mean()
         benign_mean = benign.mean()
-        malignant_std = malignant.std(ddof=1)
-        benign_std = benign.std(ddof=1)
-
-        # Pooled standard deviation stabilizes cohort-to-cohort comparisons.
-        pooled_std = np.sqrt((malignant_std.pow(2) + benign_std.pow(2)) / 2)
-        pooled_std = pooled_std.replace(0, np.nan)
+        pooled_std = np.sqrt((malignant.var(ddof=1) + benign.var(ddof=1)) / 2).replace(0, np.nan)
         cohen_d = (malignant_mean - benign_mean) / pooled_std
 
-        diff_table = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "malignant_mean": malignant_mean,
                 "benign_mean": benign_mean,
@@ -165,143 +122,157 @@ class BreastCancerDiagnosticPipeline:
             }
         ).sort_values(by="cohen_d", key=lambda s: s.abs(), ascending=False)
 
-        self.logger.info("Top 5 differentiating features (|Cohen's d|):")
-        for feature_name, row in diff_table.head(5).iterrows():
-            self.logger.info(
-                "  %s | malignant=%.4f benign=%.4f delta=%.4f d=%.4f",
-                feature_name,
-                row["malignant_mean"],
-                row["benign_mean"],
-                row["mean_difference"],
-                row["cohen_d"],
-            )
-
-        return diff_table
-
-    def summarize_data(self) -> pd.DataFrame:
-        """Produce a compact statistical summary for exploratory analysis."""
-
-        if self.data is None or self.target is None:
-            raise RuntimeError("Data must be loaded before summarization.")
-
-        summary = self.data.drop(columns=["target"]).describe().T
-        summary["missing_values"] = self.data.drop(columns=["target"]).isna().sum()
-        target_counts = self.target.value_counts().sort_index()
-
-        self.logger.info("Class distribution:")
-        for label, count in target_counts.items():
-            class_name = self.target_names[label] if self.target_names is not None else str(label)
-            self.logger.info("  %s: %d", class_name.capitalize(), int(count))
-
-        return summary
-
     def split_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
-        """Split the dataset into training and testing partitions."""
-
         if self.data is None or self.target is None:
             raise RuntimeError("Data must be loaded before splitting.")
-
-        features = self.data.drop(columns=["target"])
-        labels = self.target
-
+        X = self.data.drop(columns=["target"])
+        y = self.target
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            features,
-            labels,
+            X,
+            y,
             test_size=self.config.test_size,
             random_state=self.config.random_state,
-            stratify=labels,
+            stratify=y,
         )
-
-        self.logger.info(
-            "Train/test split completed: %d training samples and %d testing samples.",
-            len(self.X_train),
-            len(self.X_test),
-        )
-
         return self.X_train, self.X_test, self.y_train, self.y_test
 
     def build_model(self) -> Pipeline:
-        """Construct a scaled baseline classifier.
-
-        Logistic regression is a strong and interpretable baseline for binary
-        diagnostic screening, especially when features are standardized.
-        """
-
         self.pipeline = Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
                 (
                     "classifier",
-                    LogisticRegression(
-                        max_iter=2000,
-                        solver="liblinear",
-                        random_state=self.config.random_state,
-                    ),
+                    LogisticRegression(max_iter=2000, solver="liblinear", random_state=self.config.random_state),
                 ),
             ]
         )
         return self.pipeline
 
     def train_model(self) -> Pipeline:
-        """Fit the classifier on the training partition."""
-
         if self.X_train is None or self.y_train is None:
             raise RuntimeError("Training data is not ready. Call split_data first.")
-
         model = self.build_model()
         model.fit(self.X_train, self.y_train)
         self.logger.info("Model training completed.")
         return model
 
-    def evaluate_model(self) -> Dict[str, float | np.ndarray | str]:
-        """Evaluate the fitted model and print clinically oriented metrics."""
-
+    def evaluate_model(self, decision_threshold: float | None = None) -> Dict[str, Any]:
         if self.pipeline is None:
             raise NotFittedError("The model has not been trained yet.")
         if self.X_test is None or self.y_test is None:
             raise RuntimeError("Testing data is not available. Call split_data first.")
 
-        self.y_pred = self.pipeline.predict(self.X_test)
+        threshold = decision_threshold if decision_threshold is not None else self.config.decision_threshold
+        y_proba = self.pipeline.predict_proba(self.X_test)[:, 1]
+        y_pred = (y_proba >= threshold).astype(int)
 
-        matrix = confusion_matrix(self.y_test, self.y_pred)
-        precision = precision_score(self.y_test, self.y_pred)
-        recall = recall_score(self.y_test, self.y_pred)
-        f1 = f1_score(self.y_test, self.y_pred)
-        report = classification_report(self.y_test, self.y_pred, target_names=self.target_names)
+        precision, recall, pr_thresholds = precision_recall_curve(self.y_test, y_proba)
+        frac_pos, mean_pred = calibration_curve(self.y_test, y_proba, n_bins=10, strategy="quantile")
 
-        self.logger.info("Clinical confusion matrix:\n%s", matrix)
-        self.logger.info("Precision: %.4f", precision)
-        self.logger.info("Recall: %.4f", recall)
-        self.logger.info("F1-score: %.4f", f1)
-        self.logger.info("Classification report:\n%s", report)
-
-        return {
-            "confusion_matrix": matrix,
-            "precision": precision,
-            "recall": recall,
-            "f1_score": f1,
-            "classification_report": report,
+        matrix = confusion_matrix(self.y_test, y_pred)
+        metrics: Dict[str, Any] = {
+            "decision_threshold": float(threshold),
+            "accuracy": float(accuracy_score(self.y_test, y_pred)),
+            "precision": float(precision_score(self.y_test, y_pred)),
+            "recall": float(recall_score(self.y_test, y_pred)),
+            "f1_score": float(f1_score(self.y_test, y_pred)),
+            "roc_auc": float(roc_auc_score(self.y_test, y_proba)),
+            "pr_auc": float(average_precision_score(self.y_test, y_proba)),
+            "brier_score": float(brier_score_loss(self.y_test, y_proba)),
+            "confusion_matrix": matrix.tolist(),
+            "classification_report": classification_report(self.y_test, y_pred, target_names=self.target_names),
+            "precision_recall_curve": {
+                "precision": precision.tolist(),
+                "recall": recall.tolist(),
+                "thresholds": pr_thresholds.tolist(),
+            },
+            "calibration_curve": {
+                "fraction_positives": frac_pos.tolist(),
+                "mean_predicted_value": mean_pred.tolist(),
+            },
         }
 
-    def run(self) -> Dict[str, float | np.ndarray | str]:
-        """Execute the full exploratory analysis and baseline classification workflow."""
+        self.logger.info("Evaluation complete: recall=%.4f precision=%.4f roc_auc=%.4f", metrics["recall"], metrics["precision"], metrics["roc_auc"])
+        return metrics
 
+    def fit_and_evaluate(self, decision_threshold: float | None = None) -> Dict[str, Any]:
         self.load_data()
         self.inspect_features()
-        self.summarize_data()
-        self.baseline_statistical_differentiation()
         self.split_data()
         self.train_model()
-        return self.evaluate_model()
+        return self.evaluate_model(decision_threshold=decision_threshold)
+
+    def get_default_patient_profile(self) -> Dict[str, float]:
+        if self.data is None:
+            self.load_data()
+        assert self.data is not None
+        medians = self.data.drop(columns=["target"]).median()
+        return {k: float(v) for k, v in medians.to_dict().items()}
+
+    def predict_single_case(self, patient_features: Dict[str, float], decision_threshold: float | None = None) -> Dict[str, Any]:
+        if self.pipeline is None:
+            raise NotFittedError("Model has not been trained. Call fit_and_evaluate first.")
+        if self.feature_names is None:
+            raise RuntimeError("Feature names unavailable. Ensure dataset is loaded.")
+
+        row = {feature: float(patient_features[feature]) for feature in self.feature_names}
+        frame = pd.DataFrame([row])
+        prob_benign = float(self.pipeline.predict_proba(frame)[0, 1])
+        threshold = decision_threshold if decision_threshold is not None else self.config.decision_threshold
+        pred = int(prob_benign >= threshold)
+        label = "benign" if pred == 1 else "malignant"
+
+        return {
+            "predicted_label": label,
+            "probability_benign": prob_benign,
+            "probability_malignant": 1.0 - prob_benign,
+            "decision_threshold": float(threshold),
+        }
+
+    def export_thesis_artifacts(self, output_dir: str | Path = "thesis_outputs", decision_threshold: float | None = None) -> Dict[str, Any]:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        if self.data is None:
+            self.load_data()
+        summary = self.summarize_data()
+        effect_table = self.baseline_statistical_differentiation()
+        metrics = self.fit_and_evaluate(decision_threshold=decision_threshold)
+
+        summary_file = output_path / "feature_summary.csv"
+        effects_file = output_path / "effect_sizes.csv"
+        metrics_file = output_path / "evaluation_metrics.json"
+
+        summary.to_csv(summary_file)
+        effect_table.to_csv(effects_file)
+        metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+        self.logger.info("Thesis artifacts exported to %s", output_path.resolve())
+        return {
+            "summary_csv": str(summary_file),
+            "effect_sizes_csv": str(effects_file),
+            "metrics_json": str(metrics_file),
+            "metrics": metrics,
+        }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Breast cancer diagnostic baseline and thesis artifact exporter")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Decision threshold for benign class probability")
+    parser.add_argument("--export-dir", type=str, default="thesis_outputs", help="Directory for thesis-ready outputs")
+    return parser.parse_args()
 
 
 def main() -> None:
-    """Run the pipeline as a command-line script."""
-
-    pipeline = BreastCancerDiagnosticPipeline()
-    results = pipeline.run()
+    args = parse_args()
+    pipeline = BreastCancerDiagnosticPipeline(config=PipelineConfig(decision_threshold=args.threshold))
+    artifacts = pipeline.export_thesis_artifacts(output_dir=args.export_dir, decision_threshold=args.threshold)
+    print("\n=== Thesis Artifact Export Completed ===")
+    print(f"summary_csv: {artifacts['summary_csv']}")
+    print(f"effect_sizes_csv: {artifacts['effect_sizes_csv']}")
+    print(f"metrics_json: {artifacts['metrics_json']}")
     print("\n=== Final Diagnostic Metrics ===")
-    print(results["classification_report"])
+    print(artifacts["metrics"]["classification_report"])
 
 
 if __name__ == "__main__":
