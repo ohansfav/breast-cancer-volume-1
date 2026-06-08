@@ -17,7 +17,7 @@ import pandas as pd
 from sklearn.datasets import load_breast_cancer
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import (
-    classification_report,
+    classification_report,create more individual projects with actual solution and prepare a thesis based idea for me for eaach project and push to my github make the naming unique as i might use them for my masters degree. create as many as possible and push them individually to my github. you have full access
     confusion_matrix,
     f1_score,
     precision_score,
